@@ -1,0 +1,654 @@
+---
+title: "intestinal polyp"
+author: "Zhiyi Sun"
+date: "2023-02-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(dplyr)
+library(glmnet)
+library(pROC)
+library(rms)
+library(ggplot2)
+library(reshape2)
+library(corrplot)
+library(factoextra)
+library(cluster)
+library(clustMixType)
+library(ResourceSelection)
+library(riskRegression)
+library(rmda)
+library(nricens)
+library(foreign)
+library(survival)
+library(autoReg)
+library(caret)
+```
+
+## Data  
+
+```{r}
+my_data <- read_excel("polyp_data.xlsx")
+
+my_data$sex <- as.factor(my_data$sex)
+my_data$location <- as.factor(my_data$location)
+my_data$nutrition <- as.factor(my_data$nutrition)
+my_data$past_diagnosis <- as.factor(my_data$past_diagnosis)
+my_data$reason <- as.factor(my_data$reason)
+my_data$history <- as.factor(my_data$history)
+my_data$diagnosis <- as.factor(my_data$diagnosis)
+#my_data$intussusception <- factor(my_data$intussusception, levels = c(0, 1), labels = c('0', '1'))
+my_data$polyp_loca <- as.factor(my_data$polyp_loca)
+my_data$polyp_shape <- as.factor(my_data$polyp_shape)
+my_data$polyp_state <- as.factor(my_data$polyp_state)
+my_data$pathology <- as.factor(my_data$pathology)
+#my_data$adenomatoid <- as.factor(my_data$adenomatoid)
+#my_data$surgery <- as.factor(my_data$surgery)
+#my_data$age_group <- as.factor(my_data$age_group)
+my_data$recrudescence <- as.factor(my_data$recrudescence)
+  
+str(my_data)
+
+my_data %>%
+  select(everything()) %>%  # replace to your needs
+  summarise_all(funs(sum(is.na(.))))
+```
+
+```{r}
+#define response variable
+y <- my_data$intussusception
+
+#define matrix of predictor variables
+x <- data.matrix(my_data[, c(1:15)])
+
+data_new <- data.frame(x,y)
+
+df <- my_data[, c(1:16)]
+```
+
+```{r}
+# Set random seed for subsequent random selection and assignment operations
+set.seed(2023)
+
+# Partition data and create index matrix of selected values
+index <- createDataPartition(df$intussusception, p=.8, list=FALSE, times=1)
+
+# Create test and train data frames
+train_df <- df[index,]
+test_df <- df[-index,]
+
+# Verify number of rows (cases) in each data frame
+nrow(train_df)
+nrow(test_df)
+
+#define response variable
+y_nom <- train_df$intussusception
+
+#define matrix of predictor variables
+x_nom <- data.matrix(train_df[, c(1:15)])
+
+data_nom <- data.frame(x_nom,y_nom)
+```
+
+### Correlation
+
+```{r}
+cormat <- round(cor(df),2)
+head(cormat)
+melted_cormat <- melt(cormat)
+head(melted_cormat)
+ggplot(data = melted_cormat, aes(x=Var1, y=Var2, fill=value)) + 
+  geom_tile()
+
+A <- cor(df, use = "complete.obs")
+corrplot(A, method = "ellipse", title = "Correlation", tl.cex = 0.6, tl.col = 'black', mar=c(0.5, 0.5, 0.5, 0.5))
+```
+
+### Logistic
+
+```{r}
+lgst <- glm(intussusception ~ sex + location + nutrition + past_diagnosis + reason + history + diagnosis + polyp_loca + polyp_size + polyp_num + polyp_shape + polyp_state + pathology + recrudescence, binomial(link='logit'), data = train_df)
+summary(lgst)
+
+logreg1<-autoReg(lgst,uni=TRUE)#显示单因素及多因素
+logreg1
+logtable1<-myft(logreg1)
+
+rms::vif(lgst)
+```
+
+### CV-Logistic
+
+```{r}
+# Re-label values of outcome variable for train_df
+train_df$intussusception[train_df$intussusception==1] <- "yes"
+train_df$intussusception[train_df$intussusception==0] <- "no"
+
+# Re-label values of outcome variable for test_df
+test_df$intussusception[test_df$intussusception==1] <- "yes"
+test_df$intussusception[test_df$intussusception==0] <- "no"
+
+# Convert outcome variable to factor for each data frame
+train_df$intussusception <- as.factor(train_df$intussusception)
+test_df$intussusception <- as.factor(test_df$intussusception)
+
+# Specify type of training method used and the number of folds
+ctrlspecs <- trainControl(method="cv", 
+                          number=10, 
+                          savePredictions="all",
+                          classProbs=TRUE)
+
+# Set random seed for subsequent random selection and assignment operations
+set.seed(2023)
+
+# Specify logistic regression model to be estimated using training data
+# and k-fold cross-validation process
+model1 <- train(intussusception ~ ., data=train_df, 
+                method="glm", 
+                family=binomial, 
+                trControl=ctrlspecs)
+
+# Print information about model
+print(model1)
+
+# Print results of final model estimated using training data
+summary(model1)
+
+# Estimate the importance of different predictors
+varImp(model1)
+
+# Predict outcome using model from training data based on testing data
+predictions <- predict(model1, newdata=test_df)
+
+# Create confusion matrix to assess model fit/performance on test data
+confusionMatrix(data=predictions, test_df$intussusception)
+
+train_df$intussusception <- as.character(train_df$intussusception)
+test_df$intussusception <- as.character(test_df$intussusception)
+
+# Re-label values of outcome variable for train_df
+train_df$intussusception[train_df$intussusception=="yes"] <- 1
+train_df$intussusception[train_df$intussusception=="no"] <- 0
+
+# Re-label values of outcome variable for test_df
+test_df$intussusception[test_df$intussusception=="yes"] <- 1
+test_df$intussusception[test_df$intussusception=="no"] <- 0
+
+# Convert outcome variable to numeric for each data frame
+train_df$intussusception <- as.numeric(train_df$intussusception)
+test_df$intussusception <- as.numeric(test_df$intussusception)
+```
+
+### Nomogram-logistic ???
+
+```{r}
+lgst_lrm <- lrm(y_nom ~ sex + location + nutrition + past_diagnosis + reason + history + diagnosis + polyp_loca + polyp_size + polyp_num + polyp_shape + polyp_state + pathology + recrudescence, data = data_nom, x=T, y=T)
+print(lgst_lrm, digits=3)
+
+ddist <- datadist(data_nom)
+options(datadist='ddist')
+
+#nom1 <- nomogram(lgst_lrm, fun=function(x)1/(1+exp(-x)),fun.at=c(.001, .01, .05, seq(.1,.9, by=.1),                                                            .95,.99, .999),lp=F,funlabel = "Risk of Intussusception")
+
+nom1 <- nomogram(lgst_lrm, fun=plogis, funlabel = "Risk of Intussusception")
+
+plot(nom1)
+```
+
+```{r}
+lgst2 <- glm(intussusception ~ sex + location + nutrition + past_diagnosis + reason + history + diagnosis + polyp_loca + polyp_size + polyp_num + polyp_shape + polyp_state + pathology + recrudescence, binomial(link='logit'), data = test_df)
+summary(lgst2)
+
+lgst_lrm2 <- lrm(intussusception ~ sex + location + nutrition + past_diagnosis + reason + history + diagnosis + polyp_loca + polyp_size + polyp_num + polyp_shape + polyp_state + pathology + recrudescence, data = test_df, x=T, y=T)
+summary(lgst_lrm2)
+```
+
+### calibration curve-logistic
+
+```{r}
+# hosmer-lemeshow
+p.hoslem <- hoslem.test(lgst$intussusception, fitted(lgst), g=10)$p.value
+p.hoslem
+
+# plot 1
+cal <- calibrate(lgst_lrm, B=1000) 
+plot(cal, xlab="Nomogram-predicted probability of nonadherence", ylab="Actual diagnosed nonadherence (proportion)", sub=F)
+
+# plot 2
+plot(cal, xlim = c(0,1), ylim = c(0,1), xlab = "Prediced Probability", ylab = "Observed Probability", cex.lab=1.2, cex.axis=1, cex.main=1.2, cex.sub=0.8, legend = FALSE) 
+lines(cal[,c("predy","calibrated.corrected")], type = 'l', lwd = 3, pch = 16, col = "#2166AC")
+lines(cal[,c("predy","calibrated.orig")], type="l", pch=16, lwd=3, col="tomato")
+abline(0, 1, lty = 2, lwd = 2, col = "#224444")
+legend(0.6,0.2,
+       c("Apparent","Bias-corrected","Ideal"), 
+       lty = c(2,1,1), 
+       lwd = c(2,3,3), 
+       col = c("black","#2166AC","tomato"), 
+       bty = "n")
+
+# plot 3
+plot(cal, xlim = c(0,1), ylim = c(0,1), xlab = "Prediced Probability", ylab = "Observed Probability", cex.lab=1.2, cex.axis=1, cex.main=1.2, cex.sub=0.8, legend = FALSE) 
+lines(cal[,c("predy","calibrated.corrected")], type = 'l', lwd = 3, pch = 16, col = "#2166AC")
+lines(cal[,c("predy","calibrated.orig")], type="l", pch=16, lwd=3, col="tomato")
+abline(0, 1, lty = 2, lwd = 2, col = "#224444")
+legend(0.6,0.2,
+       c("Apparent","Bias-corrected","Ideal"), 
+       lty = c(2,1,1), 
+       lwd = c(2,3,3), 
+       col = c("black","#2166AC","tomato"), 
+       bty = "n")
+text(0,0,bquote("Hosmer-Lemeshow "~italic(P)~" = "~.(round(p.hoslem,3))),adj = 0)
+
+# plot 4
+fit.auc <- Score(list("fit"=lgst), formula = intussusception ~ 1, data = train_df, metrics = c("auc","brier"), summary = c("risks","IPA","riskQuantile","ibs"), plots = "calibration", null.model = T, conf.int = T, B = 1000, M = 50)
+plotCalibration(fit.auc,
+                col="tomato",
+                xlab = "Predicted Risk",
+                ylab = "Observerd RISK",
+                bars = F)
+
+# plot 5
+plotdata <- plotCalibration(fit.auc, plot = F, method = "nne")
+ggplot(plotdata$plotFrames$fit, aes(x=Pred,y=Obs)) +
+  geom_line(color="tomato", size=1.5) +
+  scale_x_continuous(limits = c(0,1), name = "Predicted Risk") +
+  scale_y_continuous(limits = c(0,1), name = "Observerd Risk") +
+  geom_abline(slope = 1, intercept = 0, lty=2) +
+  geom_rug(color="grey") +
+  theme_bw()
+```
+
+```{r}
+# hosmer-lemeshow
+p.hoslem <- hoslem.test(lgst2$intussusception, fitted(lgst2), g=10)$p.value
+p.hoslem
+
+# plot 1
+cal <- calibrate(lgst_lrm2, B=1000) 
+plot(cal, xlab="Nomogram-predicted probability of nonadherence", ylab="Actual diagnosed nonadherence (proportion)", sub=F)
+
+# plot 2
+plot(cal, xlim = c(0,1), ylim = c(0,1), xlab = "Prediced Probability", ylab = "Observed Probability", cex.lab=1.2, cex.axis=1, cex.main=1.2, cex.sub=0.8, legend = FALSE) 
+lines(cal[,c("predy","calibrated.corrected")], type = 'l', lwd = 3, pch = 16, col = "#2166AC")
+lines(cal[,c("predy","calibrated.orig")], type="l", pch=16, lwd=3, col="tomato")
+abline(0, 1, lty = 2, lwd = 2, col = "#224444")
+legend(0.6,0.2,
+       c("Apparent","Bias-corrected","Ideal"), 
+       lty = c(2,1,1), 
+       lwd = c(2,3,3), 
+       col = c("black","#2166AC","tomato"), 
+       bty = "n")
+
+# plot 3
+plot(cal, xlim = c(0,1), ylim = c(0,1), xlab = "Prediced Probability", ylab = "Observed Probability", cex.lab=1.2, cex.axis=1, cex.main=1.2, cex.sub=0.8, legend = FALSE) 
+lines(cal[,c("predy","calibrated.corrected")], type = 'l', lwd = 3, pch = 16, col = "#2166AC")
+lines(cal[,c("predy","calibrated.orig")], type="l", pch=16, lwd=3, col="tomato")
+abline(0, 1, lty = 2, lwd = 2, col = "#224444")
+legend(0.6,0.2,
+       c("Apparent","Bias-corrected","Ideal"), 
+       lty = c(2,1,1), 
+       lwd = c(2,3,3), 
+       col = c("black","#2166AC","tomato"), 
+       bty = "n")
+text(0,0,bquote("Hosmer-Lemeshow "~italic(P)~" = "~.(round(p.hoslem,3))),adj = 0)
+
+# plot 4
+fit.auc <- Score(list("fit"=lgst2), formula = intussusception ~ 1, data = test_df, metrics = c("auc","brier"), summary = c("risks","IPA","riskQuantile","ibs"), plots = "calibration", null.model = T, conf.int = T, B = 1000, M = 50)
+plotCalibration(fit.auc,
+                col="tomato",
+                xlab = "Predicted Risk",
+                ylab = "Observerd RISK",
+                bars = F)
+
+# plot 5
+plotdata <- plotCalibration(fit.auc, plot = F, method = "nne")
+ggplot(plotdata$plotFrames$fit, aes(x=Pred,y=Obs)) +
+  geom_line(color="tomato", size=1.5) +
+  scale_x_continuous(limits = c(0,1), name = "Predicted Risk") +
+  scale_y_continuous(limits = c(0,1), name = "Observerd Risk") +
+  geom_abline(slope = 1, intercept = 0, lty=2) +
+  geom_rug(color="grey") +
+  theme_bw()
+```
+
+### DCA-logistic
+
+```{r}
+modul<- decision_curve(intussusception ~ sex + location + nutrition + past_diagnosis + reason + history + diagnosis + polyp_loca + polyp_size + polyp_num + polyp_shape + polyp_state + pathology + recrudescence, data = train_df, family = binomial(link ='logit'), thresholds= seq(0,1, by = 0.01), confidence.intervals = 0.95)
+
+plot_decision_curve(modul, curve.names = "Logistic", xlab = "Threshold probability", cost.benefit.axis = FALSE, col = "red", confidence.intervals = FALSE)
+
+##CIC
+plot_clinical_impact(modul,population.size= 1000,
+                     cost.benefit.axis = T,
+                     n.cost.benefits= 8,col =c('red','blue'),
+                     confidence.intervals=T,
+                     ylim=c(0,1000),
+                     legend.position="topright")
+```
+
+```{r}
+modul2<- decision_curve(intussusception ~ sex + location + nutrition + past_diagnosis + reason + history + diagnosis + polyp_loca + polyp_size + polyp_num + polyp_shape + polyp_state + pathology + recrudescence, data = test_df, family = binomial(link ='logit'), thresholds= seq(0,1, by = 0.01), confidence.intervals = 0.95)
+
+plot_decision_curve(modul2, curve.names = "Logistic", xlab = "Threshold probability", cost.benefit.axis = FALSE, col = "red", confidence.intervals = FALSE)
+
+##CIC
+plot_clinical_impact(modul2,population.size= 1000,
+                     cost.benefit.axis = T,
+                     n.cost.benefits= 8,col =c('red','blue'),
+                     confidence.intervals=T,
+                     ylim=c(0,1000),
+                     legend.position="topright")
+```
+
+### C-Index-logistic
+
+```{r}
+rcorrcens(intussusception~predict(lgst), data = train_df)
+```
+
+```{r}
+rcorrcens(intussusception~predict(lgst2), data = test_df)
+```
+
+### ROC-logistic
+
+```{r}
+gfit <- roc(intussusception~predict(lgst), data = train_df)
+
+plot(gfit, print.auc=TRUE, print.thres=TRUE, main = "ROC CURVE", col="red",　print.thres.col="black",　identity.col="blue", identity.lty=1,identity.lwd=1)
+
+plot(smooth(gfit),col="red",print.auc=T,legacy.axes=T)
+legend("bottomright",legend = c("smoothed"),col = "red",lwd = 2)
+
+train_prob = predict(lgst, newdata = train_df, type = "response")
+train_roc = roc(train_df$intussusception ~ train_prob, plot = TRUE, print.auc = TRUE)
+as.numeric(train_roc$auc)
+```
+
+```{r}
+gfit2 <- roc(intussusception~predict(lgst2), data = test_df)
+
+plot(gfit2, print.auc=TRUE, print.thres=TRUE, main = "ROC CURVE", col="red",　print.thres.col="black",　identity.col="blue", identity.lty=1,identity.lwd=1)
+
+plot(smooth(gfit2),col="red",print.auc=T,legacy.axes=T)
+legend("bottomright",legend = c("smoothed"),col = "red",lwd = 2)
+
+test_prob = predict(lgst2, newdata = test_df, type = "response")
+test_roc = roc(test_df$intussusception ~ test_prob, plot = TRUE, print.auc = TRUE)
+as.numeric(test_roc$auc)
+```
+
+### DeLong's test-logistic
+
+```{r}
+res <- roc.test(train_roc,test_roc)
+res
+
+rocobj1 <- plot.roc(train_df$intussusception ~ train_prob, percent=TRUE, col="#1c61b6")
+rocobj2 <- lines.roc(test_df$intussusception ~ test_prob, percent=TRUE, col="#008600")
+legend("bottomright", legend=c("train", "test"), col=c("#1c61b6", "#008600"), lwd=2)
+testobj <- roc.test(rocobj1, rocobj2)
+text(50, 50, labels=paste("p-value =", format.pval(testobj$p.value)), adj=c(0, .5))
+```
+
+### forest-logistic ???
+
+```{r warning=FALSE}
+fit.result<-summary(lgst)
+df1<-fit.result$coefficients
+df2<-confint(lgst)
+df3<-cbind(df1,df2)
+df4<-data.frame(df3[-1,c(1,4,5,6)])
+df4$Var<-rownames(df4)
+colnames(df4)<-c("OR","Pvalue","OR_1","OR_2","Var")
+df5<-df4[,c(5,1,2,3,4)]
+df5$OR_mean<-df5$OR
+df5$OR<-paste0(round(df5$OR,2),
+               "(",
+               round(df5$OR_1,2),
+               "~",
+               round(df5$OR_2,2),
+               ")")
+df5$Pvalue<-round(df5$Pvalue,3)
+write.csv(df5,file = "forestplot_m1.csv",
+          quote = F,row.names = F)
+
+fp<-read.csv("forestplot_m1.csv",header=T)
+
+## plot 1
+
+forestplot(labeltext=as.matrix(fp[,1:3]),
+           mean=fp$OR_mean,
+           lower=fp$OR_1,
+           upper=fp$OR_2,
+           zero=0,
+           boxsize=0.2,
+           lineheight = unit(7,'mm'),
+           colgap=unit(2,'mm'),
+           lwd.zero=1.5,
+           lwd.ci=2, 
+           col=fpColors(box='#458B00',
+                        summary='#8B008B',
+                        lines = 'black',
+                        zero = '#7AC5CD'),
+           xlab="OR",
+           lwd.xaxis =1,
+           txt_gp = fpTxtGp(ticks = gpar(cex = 0.85),
+                            xlab  = gpar(cex = 0.8),
+                            cex = 0.9),
+           lty.ci = "solid",
+           title = "Forestplot", 
+           line.margin = 0.08,
+           graph.pos=2)
+
+## plot 2
+
+forestplot(labeltext=as.matrix(fp[,1:3]),
+           mean=fp$OR_mean,
+           lower=fp$OR_1,
+           upper=fp$OR_2,
+           zero=0,
+           boxsize=0.2,
+           graph.pos=2)
+```
+
+### lasso
+
+```{r}
+# Dumy code categorical predictor variables
+#x <- model.matrix(intussusception~., train_df)[,-1]
+x <- data.matrix(train_df[, c(1:15)])
+
+y <- train_df$intussusception
+```
+
+```{r}
+#perform k-fold cross-validation to find optimal lambda value
+set.seed(2023)
+cv_model <- cv.glmnet(x, y, alpha = 1, family = "binomial")
+
+#find optimal lambda value that minimizes test MSE
+best_lambda <- cv_model$lambda.min
+best_lambda
+
+#produce plot of test MSE by lambda value
+plot(cv_model) 
+```
+
+```{r}
+#find coefficients of best model
+best_model <- glmnet(x, y, alpha = 1, lambda = best_lambda, family = binomial())
+coef(best_model)
+print(best_model)
+
+# Make prediction on test data
+x.test <- data.matrix(test_df[, c(1:15)])
+probabilities <- best_model %>% predict(newx = x.test)
+predicted.classes <- ifelse(probabilities > 0.5, 1, 0)
+# Model accuracy
+observed.classes <- test_df$intussusception
+mean(predicted.classes == observed.classes)
+```
+
+```{r}
+best_model2 <- glmnet(x, y, alpha = 1, lambda = cv_model$lambda.1se, family = binomial())
+coef(best_model2)
+print(best_model2)
+
+# Make prediction on test data
+x.test <- data.matrix(test_df[, c(1:15)])
+probabilities <- best_model2 %>% predict(newx = x.test)
+predicted.classes <- ifelse(probabilities > 0.5, 1, 0)
+# Model accuracy rate
+observed.classes <- test_df$intussusception
+mean(predicted.classes == observed.classes)
+```
+
+### ridge ???
+
+```{r}
+#perform k-fold cross-validation to find optimal lambda value
+set.seed(2023)
+cv_model_rdg <- cv.glmnet(x, y, alpha = 0, family = "binomial")
+
+#find optimal lambda value that minimizes test MSE
+best_lambda_rdg <- cv_model_rdg$lambda.min
+best_lambda_rdg
+
+#produce plot of test MSE by lambda value
+plot(cv_model_rdg)
+```
+
+```{r}
+#find coefficients of best model
+best_model_rdg <- glmnet(x, y, alpha = 0, lambda = best_lambda_rdg, family = "binomial")
+coef(best_model_rdg)
+print(best_model_rdg)
+
+# Make prediction on test data
+x.test <- model.matrix(intussusception ~., test_df)[,-1]
+probabilities <- best_model_rdg %>% predict(newx = x.test)
+predicted.classes <- ifelse(probabilities > 0.5, "pos", "neg")
+# Model accuracy
+observed.classes <- test_df$intussusception
+mean(predicted.classes == observed.classes)
+```
+
+```{r}
+best_model_rdg2 <- glmnet(x, y, alpha = 0, lambda = cv_model_rdg$lambda.1se, family = "binomial")
+coef(best_model_rdg2)
+print(best_model_rdg2)
+
+# Make prediction on test data
+x.test <- model.matrix(intussusception ~., test_df)[,-1]
+probabilities <- best_model_rdg2 %>% predict(newx = x.test)
+predicted.classes <- ifelse(probabilities > 0.5, "pos", "neg")
+# Model accuracy rate
+observed.classes <- test_df$intussusception
+mean(predicted.classes == observed.classes)
+```
+
+### elastic net regression
+
+```{r}
+# CV for 11 alpha value
+set.seed(2023)
+for (i in 0:10) {
+  assign(paste("cvfit", i, sep=""),
+  cv.glmnet(x, y, family="binomial", type.measure="class", alpha=i/10))
+}
+# Plot Solution Paths
+par(mfrow=c(3,1))
+plot(cvfit10, main="LASSO")
+plot(cvfit0, main="Ridge")
+plot(cvfit5, main="Elastic Net")
+```
+
+```{r}
+# Set training control
+train_cont <- trainControl(method = "repeatedcv",
+                              number = 10,
+                              repeats = 5,
+                              search = "random",
+                              verboseIter = TRUE)
+
+# Train the model
+elastic_reg <- train(as.factor(intussusception) ~ .,
+                           data = train_df,
+                           method = "glmnet",
+                           preProcess = c("center", "scale"),
+                           tuneLength = 10,
+                           trControl = train_cont)
+
+
+# Best tuning parameter
+elastic_reg$bestTune
+
+# Make predictions on training set
+#predictions_train <- predict(elastic_reg, x)
+#eval_results(y_train, predictions_train, train) 
+
+# Make predictions on test set
+#predictions_test <- predict(elastic_reg, x_test)
+#eval_results(y_test, predictions_test, test)
+
+# Plot
+plot(elastic_reg, main = "Elastic Net Regression")
+
+get_best_result = function(caret_fit) {
+  best = which(rownames(caret_fit$results) == rownames(caret_fit$bestTune))
+  best_result = caret_fit$results[best, ]
+  rownames(best_result) = NULL
+  best_result
+}
+
+get_best_result(elastic_reg)
+calc_acc = function(actual, predicted) {
+  mean(actual == predicted)
+}
+calc_acc(actual = test_df$intussusception,
+         predicted = predict(elastic_reg, newdata = test_df))
+```
+
+### Forward/Backward Stepwise Selection
+
+## aic 
+
+```{r}
+fullmod <- glm(intussusception ~ ., family=binomial, data = train_df)
+nothing <- glm(intussusception ~ 1, family=binomial, data = train_df)
+
+backwards_aic = step(fullmod, trace=0) 
+formula(backwards_aic)
+summary(backwards_aic)
+
+forwards_aic = step(nothing, scope=list(lower=formula(nothing),upper=formula(fullmod)), direction="forward", trace=0)
+formula(forwards_aic)
+summary(forwards_aic)
+
+bothways_aic = step(nothing, list(lower=formula(nothing),upper=formula(fullmod)), direction="both", trace=0)
+formula(bothways_aic)
+summary(bothways_aic)
+```
+
+## bic 
+
+```{r warning=FALSE}
+backwards_bic = step(fullmod, k=log(nrow(train_df)), trace=0) 
+formula(backwards_bic)
+summary(backwards_bic)
+
+forwards_bic = step(nothing, scope=list(lower=formula(nothing),upper=formula(fullmod)), direction="forward", k=log(nrow(train_df)), trace=0)
+formula(forwards_bic)
+summary(forwards_bic)
+
+bothways_bic = step(nothing, list(lower=formula(nothing),upper=formula(fullmod)), direction="both", k=log(nrow(train_df)), trace=0)
+formula(bothways_bic)
+summary(bothways_bic)
+```
+
+

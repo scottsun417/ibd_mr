@@ -1,0 +1,3 @@
+Risk factors for secondary intussusception in children with intestinal polyps: a retrospective cohort study based on 2669 children with intestinal polyps
+
+Li, C. L., Luo, Y. H., Ouyang, H. J., Liu, L., Zhang, W. T., Jiang, N., Duan, J. Q., Zhan, M. Z., Liu, C. X., You, J. Y., Li, Y., & Zhao, H. M. (2022). 2 669例儿童肠息肉的临床特征及继发肠套叠的危险因素分析 [Clinical features of intestinal polyps and risk factors for secondary intussusception in children: an analysis of 2 669 cases]. Zhongguo dang dai er ke za zhi = Chinese journal of contemporary pediatrics, 24(5), 530–535. https://doi.org/10.7499/j.issn.1008-8830.2111168
